@@ -1,22 +1,55 @@
 # MultiDock
 
-Несколько прозрачных доков с любых сторон экрана. Системный Dock не трогает.
+**Multiple translucent docks for macOS — on any screen edge, at the same time.**
 
-## Сборка
+macOS gives you one Dock on one edge. MultiDock adds as many extra docks as you like — left, right, top, bottom — each with its own apps, shape and style. Your system Dock stays untouched.
 
-1. `xcode-select --install` (если Command Line Tools ещё нет).
-2. В папке проекта: `bash build.sh`
-3. Перетащите `MultiDock.app` в «Программы» и запустите. Иконка появится в строке меню.
+*[Русская версия](README.ru.md)*
 
-## Использование
+<!-- Add a screenshot or GIF here: docs/demo.gif -->
 
-- Иконка в строке меню → «Показать док»: галочки Снизу / Слева / Справа / Сверху, можно держать включёнными сразу несколько. Новый док получает те же приложения, что и первый.
-- Тяните док мышкой за свободное место (рамку/отступы): отпустите у нужного края, и док прилипнет и перестроится в горизонтальный или вертикальный.
-- Перетащите .app из Finder/Программ на док, чтобы добавить; иконки можно переставлять внутри дока и между доками.
-- Правый клик по иконке: показать в Finder / убрать.
-- Правый клик по фону дока: добавить приложение, положение, форма (прямоугольник / квадрат / овал), граница, отступ, размер иконок, плотность стекла, скрыть или удалить.
-- Настройки хранятся в `~/Library/Application Support/MultiDock/config.json`.
+## Features
 
-## Лицензия
+- Several docks on different screen edges **at once**
+- Frosted-glass look with adjustable transparency
+- Shapes: rectangle, square (grid) or oval
+- Adjustable icon size, inner padding and border
+- Drag a dock with the mouse — it snaps to the nearest edge, rebuilds itself horizontally or vertically, and **remembers where you left it** along the edge
+- Drag apps in from Finder or Applications; reorder icons or move them between docks
+- Running-app indicator, "reveal in Finder", launch at login
+- Lightweight native Swift/SwiftUI app, no Xcode required to build
 
-MIT, см. файл [LICENSE](LICENSE).
+## Install
+
+**Download:** grab `MultiDock.zip` from [Releases](../../releases), unzip it and move `MultiDock.app` to Applications.
+
+The app is not notarized, so on first launch macOS may block it. Either right-click the app → **Open**, or run:
+
+```
+xattr -dr com.apple.quarantine /Applications/MultiDock.app
+```
+
+**Build from source** (only Command Line Tools are needed):
+
+```
+xcode-select --install   # if not installed yet
+git clone https://github.com/Spolpinka/MultiDock.git
+cd MultiDock
+bash build.sh
+open MultiDock.app
+```
+
+Requires macOS 13 or newer.
+
+## Usage
+
+- Right-click the dock background → **Docks on screen edges** to toggle docks on the bottom / left / right / top. A new dock copies the style of the first visible one.
+- Drag a dock by its free border area to move it to another edge.
+- Right-click the dock background for: add app, return to edge center, shape, border, padding, icon size, glass density, apply style to all docks, hide, delete, quit.
+- Right-click an icon: reveal in Finder / remove from dock.
+- The same toggles are in the menu bar icon.
+- Settings are stored in `~/Library/Application Support/MultiDock/config.json`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
