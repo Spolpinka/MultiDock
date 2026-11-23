@@ -61,7 +61,7 @@ struct DockView: View {
                                       lineWidth: targeted.value ? max(2, c.borderWidth) : c.borderWidth)
                         .allowsHitTesting(false)
                 )
-                .onDrop(of: [.fileURL, .plainText],
+                .onDrop(of: [.fileURL, .url, .plainText],
                         isTargeted: Binding(get: { targeted.value }, set: { targeted.value = $0 })) { providers in
                     receiveDrop(providers, dock: dockID, anchor: nil, after: true)
                 }
@@ -140,6 +140,8 @@ struct DockView: View {
     @ViewBuilder
     private func menu(_ c: DockConfig) -> some View {
         Button("Добавить приложение…") { Launcher.pickApps(for: dockID) }
+        Button("Добавить приложения из системного дока") { store.importFromSystemDock(into: dockID) }
+        Button("Автоскрытие" + (c.autoHide ? "  ✓" : "")) { store.setAutoHide(!c.autoHide, for: dockID) }
 
         Button("Вернуть в центр края") { store.centerDock(dockID) }
         Menu("Форма") {
@@ -183,7 +185,7 @@ struct DockView: View {
         Button("Удалить док") { store.removeDock(dockID) }
         Divider()
         Button("Выйти из MultiDock") { NSApp.terminate(nil) }
-        Button("Сборка 4") {}.disabled(true)
+        Button("Сборка 5") {}.disabled(true)
     }
 }
 
@@ -196,7 +198,7 @@ struct IconDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         let pos = rowMajor ? info.location.x : info.location.y
-        return receiveDrop(info.itemProviders(for: [.fileURL, .plainText]),
+        return receiveDrop(info.itemProviders(for: [.fileURL, .url, .plainText]),
                            dock: dockID, anchor: path, after: pos > cell / 2)
     }
 }
@@ -232,7 +234,7 @@ struct DockIcon: View {
         .onTapGesture { Launcher.open(path) }
         .help(Icons.name(for: path))
         .onDrag { NSItemProvider(object: "\(dockID.uuidString)|\(path)" as NSString) }
-        .onDrop(of: [.fileURL, .plainText],
+        .onDrop(of: [.fileURL, .url, .plainText],
                 delegate: IconDropDelegate(dockID: dockID, path: path,
                                            rowMajor: config.rowMajor, cell: config.cell))
         .contextMenu {

@@ -55,10 +55,12 @@ struct DockConfig: Codable, Identifiable, Equatable {
     var inset: Double
     /// Позиция вдоль края: 0...1 (0.5 — по центру).
     var anchor: Double
+    /// Автоскрытие: док уезжает за край экрана и выезжает при подведении мыши к краю.
+    var autoHide: Bool
 
     init(id: UUID = UUID(), edge: DockEdge, items: [String], iconSize: Double = 48,
          opacity: Double = 0.85, visible: Bool = true, shape: DockShape = .rounded,
-         borderWidth: Double = 1, inset: Double = 8, anchor: Double = 0.5) {
+         borderWidth: Double = 1, inset: Double = 8, anchor: Double = 0.5, autoHide: Bool = false) {
         self.id = id
         self.edge = edge
         self.items = items
@@ -69,10 +71,11 @@ struct DockConfig: Codable, Identifiable, Equatable {
         self.borderWidth = borderWidth
         self.inset = inset
         self.anchor = anchor
+        self.autoHide = autoHide
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, edge, items, iconSize, opacity, visible, shape, borderWidth, inset, anchor
+        case id, edge, items, iconSize, opacity, visible, shape, borderWidth, inset, anchor, autoHide
     }
 
     init(from decoder: Decoder) throws {
@@ -87,6 +90,7 @@ struct DockConfig: Codable, Identifiable, Equatable {
         borderWidth = try c.decodeIfPresent(Double.self, forKey: .borderWidth) ?? 1
         inset = try c.decodeIfPresent(Double.self, forKey: .inset) ?? 8
         anchor = try c.decodeIfPresent(Double.self, forKey: .anchor) ?? 0.5
+        autoHide = try c.decodeIfPresent(Bool.self, forKey: .autoHide) ?? false
     }
 
     // MARK: - Геометрия
@@ -205,6 +209,7 @@ final class DockStore: ObservableObject {
             docks[i].opacity = src.opacity
             docks[i].borderWidth = src.borderWidth
             docks[i].inset = src.inset
+            docks[i].autoHide = src.autoHide
         }
     }
 
@@ -233,6 +238,17 @@ final class DockStore: ObservableObject {
     func setBorder(_ width: Double, for id: UUID) { update(id) { $0.borderWidth = width } }
     func setInset(_ value: Double, for id: UUID) { update(id) { $0.inset = value } }
     func setVisible(_ value: Bool, for id: UUID) { update(id) { $0.visible = value } }
+    func setAutoHide(_ value: Bool, for id: UUID) { update(id) { $0.autoHide = value } }
+
+    /// Добавить в док приложения из системного Dock (те, что там ещё не добавлены).
+    func importFromSystemDock(into id: UUID) {
+        guard let i = docks.firstIndex(where: { $0.id == id }) else { return }
+        var items = docks[i].items
+        for path in SystemDock.apps() where !items.contains(path) {
+            items.append(path)
+        }
+        docks[i].items = items
+    }
 
     func remove(path: String, from id: UUID) {
         update(id) { $0.items.removeAll { $0 == path } }
@@ -361,15 +377,63 @@ enum DockPanels {
     }
 }
 
-// MARK: - Приём перетаскивания (из Finder или из другого дока)
+// MARK: - Приложения системного Dock
+
+enum SystemDock {
+    /// Пути приложений, закреплённых в системном Dock.
+    static func apps() -> [String] {
+        guard let raw = CFPreferencesCopyAppValue("persistent-apps" as CFString,
+                                                  "com.apple.dock" as CFString) as? [[String: Any]] else {
+            return []
+        }
+        var result: [String] = []
+        for entry in raw {
+            guard let tile = entry["tile-data"] as? [String: Any],
+                  let file = tile["file-data"] as? [String: Any],
+                  let urlString = file["_CFURLString"] as? String,
+                  let url = URL(string: urlString) else { continue }
+            let path = url.path
+            if path.hasSuffix(".app"), FileManager.default.fileExists(atPath: path) {
+                result.append(path)
+            }
+        }
+        return result
+    }
+}
+
+// MARK: - Приём перетаскивания (из Finder, системного Dock или другого дока)
+
+/// Достаёт файловый URL из перетаскиваемого элемента (Finder и системный Dock отдают его по-разному).
+private func loadFileURL(_ p: NSItemProvider, completion: @escaping (URL?) -> Void) {
+    let type = p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        ? UTType.fileURL.identifier
+        : UTType.url.identifier
+    p.loadItem(forTypeIdentifier: type, options: nil) { item, _ in
+        var url: URL?
+        if let data = item as? Data {
+            url = URL(dataRepresentation: data, relativeTo: nil)
+        } else if let u = item as? URL {
+            url = u
+        } else if let s = item as? String {
+            url = URL(string: s)
+        }
+        if let u = url, u.isFileURL {
+            completion((u as NSURL).filePathURL ?? u)
+        } else {
+            completion(nil)
+        }
+    }
+}
 
 @MainActor
 func receiveDrop(_ providers: [NSItemProvider], dock: UUID, anchor: String?, after: Bool) -> Bool {
     var ok = false
     for p in providers {
-        if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        let isFile = p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+            || p.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+        if isFile {
             ok = true
-            _ = p.loadObject(ofClass: URL.self) { url, _ in
+            loadFileURL(p) { url in
                 guard let url, url.pathExtension.lowercased() == "app" else { return }
                 let path = url.path
                 Task { @MainActor in

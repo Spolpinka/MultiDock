@@ -10,6 +10,8 @@ macOS gives you one Dock on one edge. MultiDock adds as many extra docks as you 
 
 ## Features
 
+- **Auto-hide** per dock: slides off the screen edge and returns when the mouse touches the edge.
+- Import apps from the system Dock (right-click menu) or drag them in.
 - Several docks on different screen edges **at once**
 - Frosted-glass look with adjustable transparency
 - Shapes: rectangle, square (grid) or oval

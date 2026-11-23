@@ -3,6 +3,11 @@ import SwiftUI
 import Combine
 import ServiceManagement
 
+/// Панель, которую система не прижимает обратно к экрану (нужно для автоскрытия за край).
+final class DockPanel: NSPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
+
 /// Одна прозрачная панель = один док. Не забирает фокус у приложений.
 @MainActor
 final class DockPanelController {
@@ -11,9 +16,17 @@ final class DockPanelController {
     private let host: NSHostingView<DockView>
     private var lastKey: String?
 
+    // Автоскрытие
+    private(set) var autoHide = false
+    private var shownFrame = NSRect.zero
+    private var hiddenFrame = NSRect.zero
+    private var triggerZone = NSRect.zero
+    private var revealed = true
+    private var leaveSince: Date?
+
     init(id: UUID) {
         self.id = id
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+        panel = DockPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered,
                         defer: false)
@@ -58,7 +71,36 @@ final class DockPanelController {
         case .left:   x = vf.minX + inset;            y = alongY
         case .right:  x = vf.maxX - w - inset;        y = alongY
         }
-        panel.setFrame(NSRect(x: x.rounded(), y: y.rounded(), width: w, height: h), display: true)
+        let shown = NSRect(x: x.rounded(), y: y.rounded(), width: w, height: h)
+        shownFrame = shown
+        autoHide = c.autoHide
+
+        // Куда уезжает док и где мышь его вызывает (весь край экрана вдоль дока).
+        let sf = screen.frame
+        let band: CGFloat = 3
+        switch c.edge {
+        case .bottom:
+            hiddenFrame = shown.offsetBy(dx: 0, dy: sf.minY - shown.maxY)
+            triggerZone = NSRect(x: shown.minX - 20, y: sf.minY, width: w + 40, height: band)
+        case .top:
+            hiddenFrame = shown.offsetBy(dx: 0, dy: sf.maxY - shown.minY)
+            triggerZone = NSRect(x: shown.minX - 20, y: sf.maxY - band, width: w + 40, height: band)
+        case .left:
+            hiddenFrame = shown.offsetBy(dx: sf.minX - shown.maxX, dy: 0)
+            triggerZone = NSRect(x: sf.minX, y: shown.minY - 20, width: band, height: h + 40)
+        case .right:
+            hiddenFrame = shown.offsetBy(dx: sf.maxX - shown.minX, dy: 0)
+            triggerZone = NSRect(x: sf.maxX - band, y: shown.minY - 20, width: band, height: h + 40)
+        }
+        if autoHide {
+            // После перенастройки прячем док сразу, если мышь не рядом.
+            let m = NSEvent.mouseLocation
+            revealed = shown.insetBy(dx: -12, dy: -12).contains(m) || triggerZone.contains(m)
+            panel.setFrame(revealed ? shown : hiddenFrame, display: true)
+        } else {
+            revealed = true
+            panel.setFrame(shown, display: true)
+        }
 
         // Принудительно перестраиваем содержимое при смене стороны/формы/размера,
         // иначе SwiftUI обновляет вид только после следующего события мыши.
@@ -69,6 +111,37 @@ final class DockPanelController {
         }
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
+    }
+
+    /// Вызывается таймером, пока у какого-либо дока включено автоскрытие.
+    func tick(mouse: NSPoint) {
+        guard autoHide else { return }
+        if revealed {
+            let keep = shownFrame.insetBy(dx: -14, dy: -14).contains(mouse) || triggerZone.contains(mouse)
+            if keep {
+                leaveSince = nil
+            } else if NSEvent.pressedMouseButtons != 0 && panel.frame.insetBy(dx: -40, dy: -40).contains(mouse) {
+                leaveSince = nil // идёт перетаскивание рядом с доком
+            } else if let t = leaveSince {
+                if Date().timeIntervalSince(t) > 0.45 { setRevealed(false) }
+            } else {
+                leaveSince = Date()
+            }
+        } else if triggerZone.contains(mouse) {
+            leaveSince = nil
+            setRevealed(true)
+        }
+    }
+
+    private func setRevealed(_ value: Bool) {
+        guard value != revealed else { return }
+        revealed = value
+        if value { panel.orderFrontRegardless() }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(value ? shownFrame : hiddenFrame, display: true)
+        }
     }
 
     func close() {
@@ -83,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var controllers: [UUID: DockPanelController] = [:]
     private var statusItem: NSStatusItem?
     private var cancellable: AnyCancellable?
+    private var hideTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -118,6 +192,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 controllers[d.id] = DockPanelController(id: d.id)
             }
             controllers[d.id]?.apply(d, layer: layer)
+        }
+        updateTimer()
+    }
+
+    /// Опрашиваем положение мыши только пока есть док с автоскрытием.
+    private func updateTimer() {
+        let need = controllers.values.contains { $0.autoHide }
+        if need, hideTimer == nil {
+            hideTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let m = NSEvent.mouseLocation
+                    for c in self.controllers.values { c.tick(mouse: m) }
+                }
+            }
+        } else if !need {
+            hideTimer?.invalidate()
+            hideTimer = nil
         }
     }
 
