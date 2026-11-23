@@ -8,6 +8,67 @@ final class DockPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
+/// Контейнер на всю панель: принимает перетаскивание приложений напрямую из системного Dock и Finder
+/// средствами AppKit (SwiftUI-приёмник не все такие перетаскивания видит).
+final class DropContainer: NSView {
+    var dockID = UUID()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        registerForDraggedTypes([.fileURL, .URL,
+                                 NSPasteboard.PasteboardType("NSFilenamesPboardType"),
+                                 NSPasteboard.PasteboardType("com.apple.dock.extra"),
+                                 NSPasteboard.PasteboardType("com.apple.dock.tile")])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func appPaths(_ pb: NSPasteboard) -> [String] {
+        var paths: [String] = []
+        if let urls = pb.readObjects(forClasses: [NSURL.self],
+                                     options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+            paths += urls.map { $0.path }
+        }
+        if let list = pb.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String] {
+            paths += list
+        }
+        var seen = Set<String>()
+        return paths.filter { $0.hasSuffix(".app") && seen.insert($0).inserted }
+    }
+
+    private func log(_ pb: NSPasteboard, _ found: [String]) {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/MultiDock")
+        let line = "\(Date()) types=\((pb.types ?? []).map(\.rawValue)) apps=\(found)\n"
+        if let data = line.data(using: .utf8) {
+            let f = dir.appendingPathComponent("drop.log")
+            if let h = try? FileHandle(forWritingTo: f) {
+                h.seekToEndOfFile(); h.write(data); try? h.close()
+            } else {
+                try? data.write(to: f)
+            }
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        appPaths(sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        appPaths(sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let paths = appPaths(sender.draggingPasteboard)
+        log(sender.draggingPasteboard, paths)
+        guard !paths.isEmpty else { return false }
+        let id = dockID
+        Task { @MainActor in
+            for p in paths {
+                DockStore.shared.drop(path: p, from: nil, onto: id, anchor: nil, after: true)
+            }
+        }
+        return true
+    }
+}
+
 /// Одна прозрачная панель = один док. Не забирает фокус у приложений.
 @MainActor
 final class DockPanelController {
@@ -41,7 +102,12 @@ final class DockPanelController {
 
         host = NSHostingView(rootView: DockView(dockID: id))
         host.sizingOptions = []
-        panel.contentView = host
+        let container = DropContainer(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        container.dockID = id
+        host.frame = container.bounds
+        host.autoresizingMask = [.width, .height]
+        container.addSubview(host)
+        panel.contentView = container
         panel.orderFrontRegardless()
 
         DockPanels.panels[id] = panel

@@ -185,7 +185,7 @@ struct DockView: View {
         Button("Удалить док") { store.removeDock(dockID) }
         Divider()
         Button("Выйти из MultiDock") { NSApp.terminate(nil) }
-        Button("Сборка 5") {}.disabled(true)
+        Button("Сборка 6") {}.disabled(true)
     }
 }
 
